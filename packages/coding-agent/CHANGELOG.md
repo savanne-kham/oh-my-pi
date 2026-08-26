@@ -51,6 +51,7 @@
 
 ### Fixed
 
+- Long streamed assistant replies now retire settled paragraphs into native scrollback in order while still streaming, so the beginning of a long reply stays readable mid-turn and finalization flushes only the un-emitted suffix instead of one screen-scrolling batch ([#9780](https://github.com/can1357/oh-my-pi/issues/9780)).
 - Fixed hub process waits being incorrectly prolonged or satisfied by a replacement process after an automatic restart.
 - Preserved an explicitly empty `tools: []` configuration for agent definitions instead of adding default work tools.
 - Corrected MCP per-tool approval configuration documentation and behavior to use registered tool names for deny policies.
