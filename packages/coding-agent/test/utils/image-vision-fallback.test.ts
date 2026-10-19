@@ -8,7 +8,7 @@ import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import {
 	type DescribeAttachedImagesDeps,
-	describeAttachedImagesForTextModel,
+	describeAttachedImages,
 } from "@oh-my-pi/pi-coding-agent/utils/image-vision-fallback";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
@@ -56,27 +56,72 @@ function makeCompleteStub(text: string): { calls: unknown[][]; fn: typeof comple
 	return { calls, fn };
 }
 
+function makeRoutingStub(successId: string, text: string): { modelIds: string[]; fn: typeof completeSimple } {
+	const modelIds: string[] = [];
+	const fn = (async (...args: unknown[]) => {
+		const selected = args[0] as Model<Api>;
+		modelIds.push(selected.id);
+		const usage = {
+			input: 1,
+			output: 1,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 2,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		if (selected.id !== successId) {
+			return {
+				role: "assistant",
+				api: selected.api,
+				provider: selected.provider,
+				model: selected.id,
+				usage,
+				stopReason: "error",
+				errorMessage: "rate limit",
+				timestamp: Date.now(),
+				content: [],
+			} satisfies AssistantMessage;
+		}
+		return {
+			role: "assistant",
+			api: selected.api,
+			provider: selected.provider,
+			model: selected.id,
+			usage,
+			stopReason: "stop",
+			timestamp: Date.now(),
+			content: [{ type: "text", text }],
+		} satisfies AssistantMessage;
+	}) as typeof completeSimple;
+	return { modelIds, fn };
+}
+
 function makeDeps(
 	artifactsDir: string,
 	available: Model<Api>[],
 	completeImpl: typeof completeSimple,
 	apiKey: string | undefined = "test-key",
+	activeModel: Model<Api> = textModel,
+	settings = Settings.isolated(),
 ): DescribeAttachedImagesDeps {
 	return {
-		activeModel: textModel,
+		activeModel,
 		modelRegistry: {
 			getAvailable: () => available,
 			getApiKey: async () => apiKey,
+			find: (provider: string, id: string) =>
+				available.find(candidate => candidate.provider === provider && candidate.id === id),
+			hasProvider: (provider: string) => available.some(candidate => candidate.provider === provider),
 			resolver: () => async () => apiKey,
 		} as unknown as DescribeAttachedImagesDeps["modelRegistry"],
-		settings: Settings.isolated(),
+		settings,
 		localProtocolOptions: { getArtifactsDir: () => artifactsDir, getSessionId: () => "test-session" },
-		activeModelString: `${textModel.provider}/${textModel.id}`,
+		activeModelString: `${activeModel.provider}/${activeModel.id}`,
 		completeImpl,
 	};
 }
 
-describe("describeAttachedImagesForTextModel", () => {
+describe("describeAttachedImages", () => {
 	let testDir: string;
 
 	beforeEach(async () => {
@@ -89,7 +134,7 @@ describe("describeAttachedImagesForTextModel", () => {
 
 	it("saves the image under local:// and injects a vision description block", async () => {
 		const stub = makeCompleteStub("A man holding a red balloon.");
-		const blocks = await describeAttachedImagesForTextModel(
+		const blocks = await describeAttachedImages(
 			[{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }],
 			makeDeps(testDir, [textModel, visionModel], stub.fn),
 		);
@@ -110,9 +155,65 @@ describe("describeAttachedImagesForTextModel", () => {
 		expect(saved.toString("base64")).toBe(TINY_PNG_BASE64);
 	});
 
+	it("walks the vision fallback chain after a provider error", async () => {
+		const fallbackModel: Model<Api> = {
+			...visionModel,
+			provider: "fallback",
+			id: "vision-fallback",
+			name: "Vision Fallback",
+		};
+		const activeModel: Model<Api> = {
+			...visionModel,
+			provider: "chat",
+			id: "active-chat",
+			name: "Active Chat",
+		};
+		const settings = Settings.isolated({
+			"retry.fallbackChains": { vision: [`${fallbackModel.provider}/${fallbackModel.id}:low`] },
+		});
+		settings.setModelRole("vision", `${visionModel.provider}/${visionModel.id}:medium`);
+		const stub = makeRoutingStub(fallbackModel.id, "Fallback description.");
+
+		const blocks = await describeAttachedImages(
+			[{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }],
+			makeDeps(testDir, [visionModel, fallbackModel, activeModel], stub.fn, "test-key", activeModel, settings),
+		);
+
+		expect(stub.modelIds).toEqual([visionModel.id, fallbackModel.id]);
+		expect(blocks[0]!.text).toContain("Fallback description.");
+	});
+
+	it("uses the active chat model only after every configured vision model fails", async () => {
+		const fallbackModel: Model<Api> = {
+			...visionModel,
+			provider: "fallback",
+			id: "vision-fallback",
+			name: "Vision Fallback",
+		};
+		const activeModel: Model<Api> = {
+			...visionModel,
+			provider: "chat",
+			id: "active-chat",
+			name: "Active Chat",
+		};
+		const settings = Settings.isolated({
+			"retry.fallbackChains": { vision: [`${fallbackModel.provider}/${fallbackModel.id}`] },
+		});
+		settings.setModelRole("vision", `${visionModel.provider}/${visionModel.id}`);
+		const stub = makeRoutingStub(activeModel.id, "Active model description.");
+
+		const blocks = await describeAttachedImages(
+			[{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }],
+			makeDeps(testDir, [visionModel, fallbackModel, activeModel], stub.fn, "test-key", activeModel, settings),
+		);
+
+		expect(stub.modelIds).toEqual([visionModel.id, fallbackModel.id, activeModel.id]);
+		expect(blocks[0]!.text).toContain("Active model description.");
+	});
+
 	it("saves the image but emits a no-vision note when no vision model is available", async () => {
 		const stub = makeCompleteStub("should not be used");
-		const blocks = await describeAttachedImagesForTextModel(
+		const blocks = await describeAttachedImages(
 			[{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }],
 			makeDeps(testDir, [textModel], stub.fn),
 		);
@@ -130,7 +231,7 @@ describe("describeAttachedImagesForTextModel", () => {
 
 	it("falls back to a note when the vision model returns no text", async () => {
 		const stub = makeCompleteStub("   ");
-		const blocks = await describeAttachedImagesForTextModel(
+		const blocks = await describeAttachedImages(
 			[{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }],
 			makeDeps(testDir, [textModel, visionModel], stub.fn),
 		);
@@ -142,10 +243,7 @@ describe("describeAttachedImagesForTextModel", () => {
 	it("is content-addressed: identical images reuse one saved file path", async () => {
 		const image = { type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" } as const;
 		const stub = makeCompleteStub("desc");
-		const blocks = await describeAttachedImagesForTextModel(
-			[image, image],
-			makeDeps(testDir, [textModel, visionModel], stub.fn),
-		);
+		const blocks = await describeAttachedImages([image, image], makeDeps(testDir, [textModel, visionModel], stub.fn));
 
 		const paths = blocks.map(b => b.text.match(/path="(local:\/\/[^"]+)"/)![1]);
 		expect(paths[0]).toBe(paths[1]);
@@ -165,7 +263,7 @@ describe("describeAttachedImagesForTextModel", () => {
 			compat: { stripImageInput: true },
 		} as ModelSpec);
 		const stub = makeCompleteStub("should not be used");
-		const blocks = await describeAttachedImagesForTextModel(
+		const blocks = await describeAttachedImages(
 			[{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }],
 			makeDeps(testDir, [stripped], stub.fn),
 		);

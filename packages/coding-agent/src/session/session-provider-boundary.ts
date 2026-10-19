@@ -14,14 +14,15 @@ import type { SecretObfuscator } from "../secrets/obfuscator";
 import { stripPendingSecretPlaceholderSuffix } from "../secrets/placeholder";
 import { normalizeModelContextImages } from "../utils/image-loading";
 import { imageAttachmentSource } from "@oh-my-pi/pi-tui/prompt/image-source";
-import { describeAttachedImagesForTextModel, shouldDescribeImagesForTextModel } from "../utils/image-vision-fallback";
+import { describeAttachedImages, shouldDescribeImageAttachments } from "../utils/image-vision-fallback";
 import { blobExtensionForImageMimeType } from "@oh-my-pi/pi-tui/prompt/image-format";
-import { type CustomMessage, convertToLlm } from "./messages";
+import { type CustomMessage, convertToLlm, stripImagesFromMessage } from "./messages";
 import { IMAGE_ATTACHMENT_DESCRIPTION_TYPE } from "./queued-messages";
 import type { SessionContext, TranscriptSessionContextOptions } from "./session-context";
 import type { SessionManager } from "./session-manager";
 
 import {
+	cfgImagesAttachmentRouting,
 	cfgModelLoopGuardCheckAssistantContent,
 	cfgModelLoopGuardEnabled,
 	cfgProvidersAntigravityEndpoint,
@@ -208,7 +209,20 @@ export class SessionProviderBoundary {
 	/** Converts session messages using the configured pre-LLM pipeline. */
 	async convertMessagesToLlm(messages: AgentMessage[], signal?: AbortSignal): Promise<Message[]> {
 		const transformedMessages = await this.#host.transformContext(messages, signal);
-		return await this.#host.convertToLlm(transformedMessages);
+		if (cfgImagesAttachmentRouting.get(this.#host.settings) !== "delegate") {
+			return await this.#host.convertToLlm(transformedMessages);
+		}
+		const providerMessages = transformedMessages.map(message => {
+			const carriesAttachment =
+				message.role === "user" ||
+				message.role === "developer" ||
+				message.role === "custom" ||
+				(message.role === "toolResult" && message.toolName === "ask");
+			if (!carriesAttachment) return message;
+			const clone = structuredClone(message) as AgentMessage;
+			return stripImagesFromMessage(clone) > 0 ? clone : message;
+		});
+		return await this.#host.convertToLlm(providerMessages);
 	}
 
 	/** Applies session-level stream hooks and provider defaults to a side request. */
@@ -293,17 +307,17 @@ export class SessionProviderBoundary {
 		return normalizeModelContextImages(images, { model: this.#host.model() });
 	}
 
-	/** Builds a hidden vision-model description for attachments sent to a text-only model. */
+	/** Builds a hidden delegated-vision description for attached images. */
 	async buildImageDescriptionNotice(
 		normalizedImages: ImageContent[],
 		signal?: AbortSignal,
 	): Promise<CustomMessage | undefined> {
 		const model = this.#host.model();
-		if (!shouldDescribeImagesForTextModel(model, this.#host.settings)) return undefined;
+		if (!shouldDescribeImageAttachments(model, this.#host.settings)) return undefined;
 
 		let blocks: TextContent[];
 		try {
-			blocks = await describeAttachedImagesForTextModel(
+			blocks = await describeAttachedImages(
 				normalizedImages,
 				{
 					activeModel: model,
@@ -317,7 +331,7 @@ export class SessionProviderBoundary {
 				signal,
 			);
 		} catch (error) {
-			logger.warn("image attachment vision fallback failed; image left undescribed", {
+			logger.warn("image attachment vision delegation failed; image left undescribed", {
 				error: error instanceof Error ? error.message : String(error),
 			});
 			return undefined;

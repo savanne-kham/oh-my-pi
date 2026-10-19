@@ -40,7 +40,7 @@ import {
 	cfgComputerMaxWidth,
 	cfgRatchetEnabled,
 } from "../tools/settings";
-import { cfgSkillful } from "../session/settings";
+import { cfgImagesAttachmentRouting, cfgSkillful } from "../session/settings";
 import { formatSlowModeResetClock } from "../session/anthropic-slow-mode";
 import { cfgExtendedContext } from "../session/context-settings";
 import { cfgGoalEnabled } from "../goals/settings";
@@ -241,6 +241,22 @@ function applyComputerUseToggle(session: AgentSession, enable: boolean): string 
 	return enable
 		? `Computer use enabled for this session. ${formatComputerUseStatus(session)}`
 		: "Computer use disabled for this session.";
+}
+
+/** Apply a session-only image attachment route and describe its effective behavior. */
+function applyVisionRoutingCommand(settings: Settings, args: string): string | undefined {
+	const mode = args.trim().toLowerCase();
+	if (mode === "" || mode === "status") {
+		const current = cfgImagesAttachmentRouting.get(settings);
+		return `Image attachment routing: ${current}.`;
+	}
+	if (mode !== "delegate" && mode !== "native") return undefined;
+	cfgImagesAttachmentRouting.override(settings, mode);
+	const behavior =
+		mode === "delegate"
+			? "Pasted images go through @vision, its fallback chain, then the active chat model."
+			: "Vision-capable chat models receive pasted images directly; text-only models still delegate.";
+	return `Image attachment routing: ${mode} for this session. ${behavior}`;
 }
 
 /** Tools the ratchet loop needs: the eval kernel hosts `ratchet()`, `task` runs its analyzer. */
@@ -728,6 +744,32 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 				return;
 			}
 			runtime.ctx.showStatus("Usage: /computer [on|off|status]");
+			clearSubmittedText(runtime);
+		},
+	},
+	{
+		name: "vision",
+		icon: "eye",
+		description: "Route pasted images natively or through the vision fallback chain",
+		acpDescription: "Control pasted-image routing",
+		acpInputHint: "[delegate|native|status]",
+		subcommands: [
+			{ name: "delegate", description: "Use @vision, its fallbacks, then the active chat model" },
+			{ name: "native", description: "Send images directly to a vision-capable active model" },
+			{ name: "status", description: "Show the current image attachment route" },
+		],
+		allowArgs: true,
+		getTuiAutocompleteDescription: runtime =>
+			`Vision attachments: ${cfgImagesAttachmentRouting.get(runtime.ctx.session.settings)}`,
+		handle: async (command, runtime) => {
+			const message = applyVisionRoutingCommand(runtime.session.settings, command.args);
+			if (!message) return usage("Usage: /vision [delegate|native|status]", runtime);
+			await runtime.output(message);
+			return commandConsumed();
+		},
+		handleTui: (command, runtime) => {
+			const message = applyVisionRoutingCommand(runtime.ctx.session.settings, command.args);
+			runtime.ctx.showStatus(message ?? "Usage: /vision [delegate|native|status]");
 			clearSubmittedText(runtime);
 		},
 	},

@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+
+- Added delegated pasted-image routing through the `vision` role and its fallback chain, with `/vision native` to restore direct multimodal input for the session.
 
 ### Fixed
 

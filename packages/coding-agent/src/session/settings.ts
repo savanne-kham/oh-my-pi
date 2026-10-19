@@ -188,6 +188,24 @@ export const cfgImagesDescribeForTextModels = register({
 	},
 });
 
+export const cfgImagesAttachmentRouting = register({
+	id: "images.attachmentRouting",
+	type: "enum",
+	values: ["delegate", "native"] as const,
+	default: "native",
+	ui: {
+		tab: "model",
+		group: "Vision",
+		label: "Image Attachment Routing",
+		description:
+			"Always route pasted images through the vision role and its fallback chain (delegate), or send them directly to vision-capable active models (native)",
+		options: [
+			{ value: "delegate", label: "Delegate" },
+			{ value: "native", label: "Native" },
+		],
+	},
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Model
 // ────────────────────────────────────────────────────────────────────────

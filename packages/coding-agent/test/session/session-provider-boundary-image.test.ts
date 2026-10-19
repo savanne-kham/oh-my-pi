@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Api, ImageContent, Model } from "@oh-my-pi/pi-ai";
+import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { Api, ImageContent, Message, Model } from "@oh-my-pi/pi-ai";
 import type { ModelSpec } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -31,17 +32,23 @@ function makeProxyModel(id: string, compat?: ModelSpec["compat"]): Model<Api> {
 	} as ModelSpec);
 }
 
-function makeHost(active: Model<Api>, artifactsDir: string): SessionProviderBoundaryHost {
+function makeHost(
+	active: Model<Api>,
+	artifactsDir: string,
+	settings = Settings.isolated(),
+): SessionProviderBoundaryHost {
 	return {
 		agent: { telemetry: undefined },
 		sessionManager: {},
-		settings: Settings.isolated(),
+		settings,
 		modelRegistry: {
 			getAvailable: () => [],
 		},
 		model: () => active,
 		sessionId: () => "test-session",
 		localProtocolOptions: () => ({ getArtifactsDir: () => artifactsDir, getSessionId: () => "test-session" }),
+		transformContext: (messages: AgentMessage[]) => messages,
+		convertToLlm: (messages: AgentMessage[]) => messages as unknown as Message[],
 		obfuscator: () => undefined,
 	} as unknown as SessionProviderBoundaryHost;
 }
@@ -71,5 +78,40 @@ describe("buildImageDescriptionNotice wire truth (#9697)", () => {
 			image,
 		]);
 		expect(silent).toBeUndefined();
+	});
+
+	it("delegates attachments for a vision-capable model when explicitly configured", async () => {
+		const image: ImageContent = { type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" };
+		const active = makeProxyModel("vision-chat", { stripImageInput: false });
+		const settings = Settings.isolated({
+			"images.attachmentRouting": "delegate",
+			"images.describeForTextModels": false,
+		});
+		const notice = await new SessionProviderBoundary(makeHost(active, testDir, settings)).buildImageDescriptionNotice(
+			[image],
+		);
+
+		expect(notice).toBeDefined();
+		expect(JSON.stringify(notice)).toContain("No vision-capable model");
+	});
+
+	it("keeps attachment bytes in session state but strips them from delegated provider context", async () => {
+		const image: ImageContent = { type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" };
+		const active = makeProxyModel("vision-chat", { stripImageInput: false });
+		const settings = Settings.isolated({ "images.attachmentRouting": "delegate" });
+		const boundary = new SessionProviderBoundary(makeHost(active, testDir, settings));
+		const messages = [
+			{
+				role: "user" as const,
+				content: [{ type: "text" as const, text: "Inspect this." }, image],
+				timestamp: 1,
+			},
+		];
+
+		const converted = await boundary.convertMessagesToLlm(messages);
+
+		expect(messages[0]!.content).toContain(image);
+		expect(JSON.stringify(converted)).not.toContain(TINY_PNG_BASE64);
+		expect(JSON.stringify(converted)).toContain("Inspect this.");
 	});
 });

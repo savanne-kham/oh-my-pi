@@ -241,7 +241,7 @@ describe("AgentSession prompt admission racing abort", () => {
 			true,
 		);
 		const describeStarted = Promise.withResolvers<AbortSignal | undefined>();
-		const spy = spyOn(imageVisionFallback, "describeAttachedImagesForTextModel").mockImplementation(
+		const spy = spyOn(imageVisionFallback, "describeAttachedImages").mockImplementation(
 			async (_images, _deps, signal) => {
 				describeStarted.resolve(signal);
 				// Stands in for a provider that never answers: only the signal ends it.

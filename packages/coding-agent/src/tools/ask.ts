@@ -42,7 +42,7 @@ import { sessionLocalProtocolOptions } from "../internal-urls/context";
 import { cfgAskNotify, askTimeoutMs } from "../modes/settings";
 import { renderAttachmentSourceNotice } from "../session/attachment-source-notice";
 import { cfgSpeechEnabled } from "../tts/settings";
-import { describeAttachedImagesForTextModel, shouldDescribeImagesForTextModel } from "../utils/image-vision-fallback";
+import { describeAttachedImages, shouldDescribeImageAttachments } from "../utils/image-vision-fallback";
 
 // =============================================================================
 // Types
@@ -596,8 +596,8 @@ export class AskTool implements AgentTool<typeof askSchema, AskToolDetails> {
 	}
 
 	/**
-	 * Blocks for answer images: each image with its source-path notice and, for a text-only model,
-	 * the vision description a pasted prompt image gets (best effort).
+	 * Blocks for answer images: each image with its source-path notice and, when
+	 * attachment routing delegates, the same vision description as a pasted prompt image.
 	 */
 	async #answerImageBlocks(
 		images: ImageContent[],
@@ -607,9 +607,9 @@ export class AskTool implements AgentTool<typeof askSchema, AskToolDetails> {
 		let descriptions: TextContent[] | undefined;
 		const model = this.session.getActiveModel?.();
 		const modelRegistry = this.session.modelRegistry;
-		if (modelRegistry && shouldDescribeImagesForTextModel(model, this.session.settings)) {
+		if (modelRegistry && shouldDescribeImageAttachments(model, this.session.settings)) {
 			try {
-				descriptions = await describeAttachedImagesForTextModel(
+				descriptions = await describeAttachedImages(
 					images,
 					{
 						activeModel: model,

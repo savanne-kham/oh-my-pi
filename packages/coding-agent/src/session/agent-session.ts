@@ -7705,8 +7705,8 @@ export class AgentSession implements SettingsScope {
 		if (normalizedImages?.length) {
 			userContent.push(...normalizedImages);
 		}
-		// Text-only model + image attachment: describe via a vision model and inject the
-		// description as a hidden companion (the image stays in the visible user message).
+		// Delegated attachment routing injects a hidden vision description while
+		// retaining the image in session state for display and later inspection.
 		const imageDescriptionNotice = normalizedImages?.length
 			? await this.#buildImageDescriptionNotice(normalizedImages)
 			: undefined;
@@ -8759,8 +8759,8 @@ export class AgentSession implements SettingsScope {
 		if (normalizedImages?.length) {
 			content.push(...normalizedImages);
 		}
-		// Text-only model + image attachment: describe via a vision model and enqueue the
-		// description as a hidden companion immediately before the user message.
+		// Delegated attachment routing enqueues the hidden description immediately
+		// before the user message while retaining the original image in session state.
 		const imageDescriptionNotice = preprocessed
 			? preprocessed.descriptionNotice
 			: normalizedImages?.length
