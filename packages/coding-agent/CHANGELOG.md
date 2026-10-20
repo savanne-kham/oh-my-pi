@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `providers.autoThinkingAllowOff` so `auto` can turn reasoning off for simple turns on models that truly support it; other models keep their real lowest effort
+
 ### Fixed
 
 - Fixed Mnemopi memory completions ignoring the memory role's thinking suffix, including one inherited from `tiny` or `smol` when `modelRoles.memory` is unset; each `retry.fallbackChains.memory` entry sends its own level, and `:off` disables reasoning ([#16378](https://github.com/can1357/oh-my-pi/pull/16378) by [@alphastorm](https://github.com/alphastorm))

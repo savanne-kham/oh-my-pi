@@ -4756,7 +4756,7 @@ export function budgetThinkingOutput(
  * which drives adaptive thinking through the `thinking.type: "adaptive"` tag
  * itself rather than `output_config.effort`.
  */
-function isAdaptiveOnlyThinking(model: Model<"anthropic-messages">): boolean {
+export function isAdaptiveOnlyThinking(model: Model<"anthropic-messages">): boolean {
 	return (
 		model.thinking?.mode === "anthropic-adaptive" &&
 		!model.compat.disableAdaptiveThinking &&

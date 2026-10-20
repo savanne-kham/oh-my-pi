@@ -1049,6 +1049,20 @@ export const cfgProvidersAutoThinkingMaxEffort = register({
 	},
 });
 
+export const cfgProvidersAutoThinkingAllowOff = register({
+	id: "providers.autoThinkingAllowOff",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "model",
+		group: "Thinking",
+		label: "Auto Thinking Off",
+		description:
+			"Let the `auto` classifier turn reasoning off for turns that need none (acknowledgements, commands given verbatim, recalled facts). Never offered on models that require an effort.",
+		condition: "autoThinkingActive",
+	},
+});
+
 export const cfgFeaturesUnexpectedStopDetection = register({
 	id: "features.unexpectedStopDetection",
 	type: "enum",

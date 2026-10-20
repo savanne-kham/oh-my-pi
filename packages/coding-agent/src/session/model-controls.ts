@@ -1,4 +1,4 @@
-import { type Agent, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import { type Agent, type ResolvedThinkingLevel, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model, ProviderSessionState, ServiceTier, ServiceTierByFamily, ServiceTierFamily } from "@oh-my-pi/pi-ai";
 import {
 	Effort,
@@ -86,7 +86,7 @@ export class ModelControls {
 	/** Hard per-session effort ceiling (e.g. a task spawn's `task.maxEffort` cap); recovery paths re-clamp to it. */
 	readonly #thinkingLevelCeiling: Effort | undefined;
 	#autoThinking = false;
-	#autoResolvedLevel: Effort | undefined;
+	#autoResolvedLevel: ResolvedThinkingLevel | undefined;
 	#serviceTierByFamily: ServiceTierByFamily;
 
 	constructor(
@@ -144,8 +144,8 @@ export class ModelControls {
 		return this.#autoThinking;
 	}
 
-	/** Last concrete effort selected by automatic classification. */
-	get autoResolvedThinkingLevel(): Effort | undefined {
+	/** Last level selected by automatic classification: a concrete effort, or `off`. */
+	get autoResolvedThinkingLevel(): ResolvedThinkingLevel | undefined {
 		return this.#autoResolvedLevel;
 	}
 
@@ -190,7 +190,11 @@ export class ModelControls {
 	}
 
 	/** Restores an exact thinking snapshot after a failed session switch. */
-	restoreThinkingSnapshot(level: ThinkingLevel | undefined, auto: boolean, resolved: Effort | undefined): void {
+	restoreThinkingSnapshot(
+		level: ThinkingLevel | undefined,
+		auto: boolean,
+		resolved: ResolvedThinkingLevel | undefined,
+	): void {
 		this.#thinkingLevel = level;
 		this.#autoThinking = auto;
 		this.#autoResolvedLevel = resolved;
@@ -637,7 +641,7 @@ export class ModelControls {
 		// nothing to pick — skip classification rather than discard its result.
 		if (getSupportedEfforts(model).length === 0) return;
 
-		let resolved: Effort | undefined;
+		let resolved: ResolvedThinkingLevel | undefined;
 		if (this.#host.magicKeywordEnabled("ultrathink") && containsMagicKeyword(promptText, "ultrathink")) {
 			// The user explicitly asked for maximum thinking; bypass the classifier
 			// (and the `providers.autoThinkingMaxEffort` ceiling) and jump straight
@@ -679,11 +683,12 @@ export class ModelControls {
 		// Drop the result if the turn was aborted/superseded while classifying.
 		if (this.#host.promptGeneration() !== generation || !this.#autoThinking) return;
 
-		const effort = clampThinkingLevelToCeiling(
-			model,
-			resolved ?? this.#autoResolvedLevel ?? resolveProvisionalAutoLevel(model),
-			this.#thinkingLevelCeiling,
-		);
+		const candidate = resolved ?? this.#autoResolvedLevel ?? resolveProvisionalAutoLevel(model);
+		// `off` is below every effort, so the effort ceiling never applies to it.
+		const effort =
+			candidate === ThinkingLevel.Off
+				? candidate
+				: clampThinkingLevelToCeiling(model, candidate, this.#thinkingLevelCeiling);
 		if (effort === undefined) return;
 		const shouldPersistResolution = this.#thinkingLevel !== effort;
 		this.#autoResolvedLevel = effort;
@@ -696,7 +701,8 @@ export class ModelControls {
 			type: "thinking_level_changed",
 			thinkingLevel: effort,
 			configured: AUTO_THINKING,
-			resolved: effort,
+			// `thinkingLevel` already carries an `off` resolution; `resolved` stays an effort.
+			resolved: effort === ThinkingLevel.Off ? undefined : effort,
 		});
 	}
 

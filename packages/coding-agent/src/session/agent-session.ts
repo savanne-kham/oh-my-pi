@@ -39,6 +39,7 @@ import {
 	EventLoopKeepalive,
 	type QueuedMessagePreparation,
 	type QueuedMessageQueue,
+	type ResolvedThinkingLevel,
 	resolveTelemetry,
 	type StreamFn,
 	TERMINAL_TOOL_RESULT_ABORT_REASON,
@@ -6461,7 +6462,7 @@ export class AgentSession implements SettingsScope {
 	}
 
 	/** The level `auto` resolved to for the current turn (undefined until classified). */
-	autoResolvedThinkingLevel(): Effort | undefined {
+	autoResolvedThinkingLevel(): ResolvedThinkingLevel | undefined {
 		return this.#models.autoResolvedThinkingLevel;
 	}
 

@@ -183,12 +183,18 @@ describe("auto thinking classifier helpers", () => {
 		expect(options?.maxTokens).toBeGreaterThan(1024);
 	});
 
-	function createOnlineFixture(targetModel: Model, answer: string, maxEffort: "xhigh" | "max" = "xhigh") {
+	function createOnlineFixture(
+		targetModel: Model,
+		answer: string,
+		maxEffort: "xhigh" | "max" = "xhigh",
+		allowOff = false,
+	) {
 		const classifierModel = getBundledModel("anthropic", "claude-sonnet-4-6");
 		if (!classifierModel) throw new Error("Expected bundled Claude Sonnet 4.6 model");
 		const settings = Settings.isolated({
 			modelRoles: { judge: `${classifierModel.provider}/${classifierModel.id}` },
 			"providers.autoThinkingMaxEffort": maxEffort,
+			"providers.autoThinkingAllowOff": allowOff,
 		});
 		const registry = createRegistry([classifierModel], { [classifierModel.provider]: "test-key" });
 		const usage = {
@@ -216,7 +222,12 @@ describe("auto thinking classifier helpers", () => {
 		return { deps: { settings, registry, model: targetModel }, completeSimpleMock, classifierModel, usage };
 	}
 
-	function buildLadderModel(id: string, efforts: Effort[]): Model {
+	function buildLadderModel(
+		id: string,
+		efforts: Effort[],
+		thinking: { requiresEffort?: boolean } = {},
+		reasoningDisableMode: "none-effort" | "lowest-effort" = "none-effort",
+	): Model {
 		return buildModel({
 			id,
 			name: id,
@@ -224,9 +235,10 @@ describe("auto thinking classifier helpers", () => {
 			provider: "mock",
 			baseUrl: "https://example.com",
 			reasoning: true,
-			thinking: { mode: "effort", efforts },
+			thinking: { mode: "effort", efforts, ...thinking },
 			input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			compat: { reasoningDisableMode },
 			contextWindow: 128_000,
 			maxTokens: 4096,
 		});
@@ -326,6 +338,40 @@ describe("auto thinking classifier helpers", () => {
 		);
 		expect(await classifyDifficulty({ request: "cut over the storage layer" }, fixture.deps)).toBe(Effort.Max);
 		expect(JSON.stringify(fixture.completeSimpleMock.mock.calls[0]?.[1])).not.toContain("xhigh");
+	});
+
+	it("resolves off when the user allows auto-off", async () => {
+		const fixture = createOnlineFixture(buildLadderModel("mock-xhigh", XHIGH_LADDER), "off", "xhigh", true);
+
+		expect(await classifyDifficulty({ request: "thanks, that's all" }, fixture.deps)).toBe(ThinkingLevel.Off);
+		expect(JSON.stringify(fixture.completeSimpleMock.mock.calls[0]?.[1])).toContain("Choose off only when");
+	});
+
+	it.each([
+		["auto-off is not allowed", {}, false, "none-effort"],
+		["the model requires an effort", { requiresEffort: true }, true, "none-effort"],
+		["the transport has no native off and would run the lowest effort", {}, true, "lowest-effort"],
+	] as const)("never offers or accepts off when %s", async (_case, thinking, allowOff, disableMode) => {
+		// Off here would either surprise the user or silently run the lowest tier
+		// under an `off` label; an `off` answer the question never offered must
+		// fail the classification (the caller keeps its provisional level).
+		const fixture = createOnlineFixture(
+			buildLadderModel("mock-xhigh", XHIGH_LADDER, thinking, disableMode),
+			"off",
+			"xhigh",
+			allowOff,
+		);
+
+		await expect(classifyDifficulty({ request: "thanks, that's all" }, fixture.deps)).rejects.toThrow();
+		expect(JSON.stringify(fixture.completeSimpleMock.mock.calls[0]?.[1])).not.toContain("Choose off only when");
+	});
+
+	it("asks the judge on a single-effort ladder once off is a real choice", async () => {
+		// Without auto-off a one-tier ladder resolves without any judge request.
+		const fixture = createOnlineFixture(buildLadderModel("mock-high-only", [Effort.High]), "high", "xhigh", true);
+
+		expect(await classifyDifficulty({ request: "summarize the diff" }, fixture.deps)).toBe(Effort.High);
+		expect(fixture.completeSimpleMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("takes the first label when the classifier echoes several", async () => {
