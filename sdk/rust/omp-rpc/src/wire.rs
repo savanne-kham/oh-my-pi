@@ -2550,6 +2550,8 @@ pub struct ThinkingConfig {
 	pub suppress_when_off: Option<bool>,
 	#[serde(rename = "requiresEffort", default, skip_serializing_if = "Option::is_none")]
 	pub requires_effort: Option<bool>,
+	#[serde(rename = "autoOff", default, skip_serializing_if = "Option::is_none")]
+	pub auto_off: Option<bool>,
 }
 
 /// Model descriptor: the client-relevant subset of the server's model record.
@@ -3842,9 +3844,9 @@ pub struct ThinkingLevelChangedEvent {
 	/// The user's selector when it differs from the effective level.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub configured: Option<ConfiguredThinkingLevel>,
-	/// The level `auto` resolved to this turn, once classified.
+	/// The level `auto` resolved to this turn, once classified; `off` when it disabled reasoning.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub resolved: Option<Effort>,
+	pub resolved: Option<ThinkingLevel>,
 }
 
 /// Goal mode changed, by a host `goal` command or the agent's `goal` tool.

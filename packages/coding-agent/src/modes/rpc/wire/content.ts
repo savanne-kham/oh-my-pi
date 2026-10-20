@@ -290,6 +290,7 @@ export const modelDefs = {
 		"effortBudgets?": "Record<string, number>",
 		"suppressWhenOff?": "boolean",
 		"requiresEffort?": "boolean",
+		"autoOff?": "boolean",
 	},
 	ModelInfo: doc(
 		{

@@ -5,16 +5,19 @@
  * short-circuiting without a judge request when zero or one tier is available.
  * For task-spawned turns, it considers the delegator's `solutionSpace` alone.
  * It maps the selected level to a concrete {@link Effort} and clamps it into
- * the active model's supported range (never below {@link Effort.Low}).
+ * the active model's supported range (never below {@link Effort.Low}), or to
+ * {@link ThinkingLevel.Off} when the model opts into auto-off
+ * (`thinking.autoOff`) and the judge finds no reasoning to do.
  * The judge comes from the live `judge` role chain. A local on-device candidate
  * gets the coarser
  * `trivial|moderate|hard` question (3-class is more reliable
- * than 4-way ordinal on sub-2B models), mapped to `low|high|xhigh`.
+ * than 4-way ordinal on sub-2B models), mapped to `low|high|xhigh`; it never
+ * selects off.
  *
  * Throws on any failure (no judge, no key, unparseable output, abort/timeout);
  * the caller falls back to a concrete level and continues the turn.
  */
-import type { AgentTelemetryConfig } from "@oh-my-pi/pi-agent-core";
+import { type ResolvedThinkingLevel, ThinkingLevel, type AgentTelemetryConfig } from "@oh-my-pi/pi-agent-core";
 import { type ChoiceQuestion, Effort, judgeQuestions, type Model, renderQuestion } from "@oh-my-pi/pi-ai";
 import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
 import type { ModelRegistry } from "../config/model-registry";
@@ -26,10 +29,11 @@ import { preprocessTinyMessage } from "../tiny/message-preproc";
 
 import { cfgProvidersAutoThinkingMaxEffort } from "../session/settings";
 
-type Level = "low" | "medium" | "high" | "xhigh" | "max";
+type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+type Level = "off" | EffortLevel;
 type Bucket = "trivial" | "moderate" | "hard";
 
-const LEVEL_EFFORT: Record<Level, Effort> = {
+const LEVEL_EFFORT: Record<EffortLevel, Effort> = {
 	low: Effort.Low,
 	medium: Effort.Medium,
 	high: Effort.High,
@@ -45,57 +49,79 @@ const BUCKET_EFFORT: Record<Bucket, Effort> = {
 
 /**
  * The on-device bucket question, the effort ladder (levels by how open-ended
- * the problem is, `max` last), and the solution-space instructions, which
- * reuse the ladder's levels.
+ * the problem is, `off` first and `max` last), and the solution-space
+ * instructions, which reuse the ladder's levels.
  */
 const QUESTIONS = judgeQuestions(questionFile);
 
-/** Questions for one classification input kind: on-device bucket, full ladder, full ladder with `max`. */
+/**
+ * Ladder variants by which optional ends they offer: `max` only when the
+ * target model exposes that tier and the ceiling allows it, `off` only when the
+ * model opts into auto-off and can disable reasoning.
+ */
+type LadderVariant = "core" | "withMax" | "withOff" | "withMaxAndOff";
+
+/** Questions for one classification input kind: on-device bucket, plus each ladder variant. */
 interface QuestionSet {
 	bucket: ChoiceQuestion<Bucket>;
-	level: ChoiceQuestion<Exclude<Level, "max">>;
-	/** Offers `max`; used only when the target model exposes that tier. */
-	levelWithMax: ChoiceQuestion<Level>;
+	ladder: Record<LadderVariant, ChoiceQuestion>;
 }
 
 /**
  * Build the question set for one input kind. Only the instructions differ
  * between kinds; every kind shares the ladder's levels and the bucket criteria.
+ * A variant that does not offer an end drops both its criterion and its
+ * instruction clause.
  */
 function buildQuestionSet(instructions: string, bucketInstructions: string): QuestionSet {
 	const ladder: ChoiceQuestion<Level> = { ...QUESTIONS.level, instructions };
-	const { max: _max, ...levels } = ladder.criteria;
+	const { off, max, ...core } = ladder.criteria;
+	const variant = (withMax: boolean, withOff: boolean): ChoiceQuestion => ({
+		...renderQuestion(ladder, { withMax, withOff }),
+		criteria: { ...(withOff && { off }), ...core, ...(withMax && { max }) },
+	});
 	return {
 		bucket: { ...QUESTIONS.bucket, instructions: bucketInstructions },
-		level: { ...renderQuestion(ladder, {}), criteria: levels },
-		levelWithMax: renderQuestion(ladder, { withMax: true }),
+		ladder: {
+			core: variant(false, false),
+			withMax: variant(true, false),
+			withOff: variant(false, true),
+			withMaxAndOff: variant(true, true),
+		},
 	};
 }
 
-function isLevel(label: string): label is Level {
+function isEffortLevel(label: string): label is EffortLevel {
 	return Object.hasOwn(LEVEL_EFFORT, label);
 }
 
 /** The ladder question narrowed to the levels the target model supports. */
 interface SupportedLevelQuestion {
 	question: ChoiceQuestion;
-	levels: Level[];
+	/** Supported effort levels, lowest first. `off` is never listed here. */
+	efforts: EffortLevel[];
+	/** Whether the question still offers `off`; only alongside at least one effort. */
+	offersOff: boolean;
 }
 
 /** Keep the judge's choices aligned with the effort surface the target can use. */
-function filterSupportedLevels(
-	question: ChoiceQuestion<Level> | ChoiceQuestion<Exclude<Level, "max">>,
-	model: Model,
-): SupportedLevelQuestion {
+function filterSupportedLevels(question: ChoiceQuestion, model: Model): SupportedLevelQuestion {
 	const supported = getSupportedEfforts(model);
 	const criteria: Record<string, string | null> = {};
-	const levels: Level[] = [];
+	const efforts: EffortLevel[] = [];
 	for (const [label, rubric] of Object.entries(question.criteria)) {
-		if (!isLevel(label) || !supported.includes(LEVEL_EFFORT[label])) continue;
+		if (!isEffortLevel(label) || !supported.includes(LEVEL_EFFORT[label])) continue;
 		criteria[label] = rubric;
-		levels.push(label);
+		efforts.push(label);
 	}
-	return { question: { ...question, criteria }, levels };
+	// `off` is a disable state beside the ladder, never the ladder itself: with no
+	// effort to weigh it against it would turn every turn off unasked.
+	const offersOff = Object.hasOwn(question.criteria, "off") && efforts.length > 0;
+	return {
+		question: { ...question, criteria: offersOff ? { off: question.criteria.off, ...criteria } : criteria },
+		efforts,
+		offersOff,
+	};
 }
 
 const REQUEST_QUESTIONS = buildQuestionSet(QUESTIONS.level.instructions, QUESTIONS.bucket.instructions);
@@ -139,15 +165,16 @@ function autoEffortCeiling(deps: ClassifyDifficultyDeps): Effort {
 
 /**
  * Classify `input` and return a concrete effort clamped to `deps.model`,
- * or `undefined` when the model has no controllable effort surface or no
- * supported effort under the active ceiling (auto has nothing to pick — the
- * caller falls back to its provisional auto level).
+ * {@link ThinkingLevel.Off} when the model opts into auto-off and the judge
+ * chose it, or `undefined` when the model has no controllable effort surface
+ * or no supported effort under the active ceiling (auto has nothing to pick —
+ * the caller falls back to its provisional auto level).
  * @throws when the backend cannot produce a usable classification.
  */
 export async function classifyDifficulty(
 	input: DifficultyInput,
 	deps: ClassifyDifficultyDeps,
-): Promise<Effort | undefined> {
+): Promise<ResolvedThinkingLevel | undefined> {
 	const judge = resolveJudge({
 		settings: deps.settings,
 		registry: deps.registry,
@@ -166,32 +193,44 @@ export async function classifyDifficulty(
 	const questions = solutionSpace ? SOLUTION_SPACE_QUESTIONS : REQUEST_QUESTIONS;
 	const options = { signal: deps.signal };
 	const ceiling = autoEffortCeiling(deps);
-	const level = filterSupportedLevels(ceiling === Effort.Max ? questions.levelWithMax : questions.level, deps.model);
-	const [onlyLevel, ...otherLevels] = level.levels;
+	// `auto` may turn thinking off only on a model that opts in (`thinking.autoOff`,
+	// set by listing `off` in models.yml `efforts`) and does not require an effort,
+	// where off would silently run the lowest tier.
+	const withOff = deps.model.thinking?.autoOff === true && deps.model.thinking.requiresEffort !== true;
+	const withMax = ceiling === Effort.Max;
+	const variant: LadderVariant = withMax ? (withOff ? "withMaxAndOff" : "withMax") : withOff ? "withOff" : "core";
+	const level = filterSupportedLevels(questions.ladder[variant], deps.model);
+	const [onlyEffort, ...otherEfforts] = level.efforts;
 	// One eligible tier below Max is the answer every candidate reaches (the local
 	// bucket clamps into the same pool), so it needs no judge and no judge credential.
-	if (onlyLevel !== undefined && otherLevels.length === 0 && onlyLevel !== "max") return LEVEL_EFFORT[onlyLevel];
+	// Offering `off` beside it is a real choice and still goes to the judge.
+	if (onlyEffort !== undefined && otherEfforts.length === 0 && onlyEffort !== "max" && !level.offersOff) {
+		return LEVEL_EFFORT[onlyEffort];
+	}
 	// With no online tier, every candidate lands in the same place: the local
 	// bucket's XHigh-capped pool, which is empty (`["max"]`) or holds only a
 	// sub-Low tier (`["minimal"]`).
-	if (onlyLevel === undefined) return clampAutoThinkingEffort(deps.model, Effort.Low, Effort.XHigh);
+	if (onlyEffort === undefined) return clampAutoThinkingEffort(deps.model, Effort.Low, Effort.XHigh);
 	const classified = await judge.withCandidate(async (candidate, kind) => {
 		// The 3-bucket local question cannot select `max`, so its ceiling stays at
 		// XHigh whatever the setting says — otherwise a sparse ladder would snap its
-		// `hard` bucket up to a tier it never chose.
+		// `hard` bucket up to a tier it never chose. It cannot select `off` either.
 		if (kind === "local") {
 			const { answers } = await candidate.judge({ state, questions: { bucket: questions.bucket } }, options);
-			return { effort: BUCKET_EFFORT[answers.bucket.choice], ceiling: Effort.XHigh };
+			return { level: BUCKET_EFFORT[answers.bucket.choice], ceiling: Effort.XHigh };
 		}
-		if (otherLevels.length === 0) return { effort: LEVEL_EFFORT[onlyLevel], ceiling };
+		if (otherEfforts.length === 0 && !level.offersOff) return { level: LEVEL_EFFORT[onlyEffort], ceiling };
 		const { answers } = await candidate.judge({ state, questions: { level: level.question } }, options);
-		const chosen = level.levels.find(label => label === answers.level.choice);
+		const choice = answers.level.choice;
+		if (choice === "off" && level.offersOff) return { level: ThinkingLevel.Off, ceiling };
+		const chosen = level.efforts.find(label => label === choice);
 		if (chosen === undefined) {
-			throw new Error(`auto-thinking: judge chose unsupported level "${answers.level.choice}"`);
+			throw new Error(`auto-thinking: judge chose unsupported level "${choice}"`);
 		}
-		return { effort: LEVEL_EFFORT[chosen], ceiling };
+		return { level: LEVEL_EFFORT[chosen], ceiling };
 	}, options);
+	if (classified.level === ThinkingLevel.Off) return ThinkingLevel.Off;
 	// Local bucket choices are unfiltered and may fall below every supported tier.
 	// Passing the ceiling prevents snapping upward into an excluded tier.
-	return clampAutoThinkingEffort(deps.model, classified.effort, classified.ceiling);
+	return clampAutoThinkingEffort(deps.model, classified.level, classified.ceiling);
 }

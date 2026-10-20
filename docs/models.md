@@ -907,6 +907,25 @@ Custom models and overrides may define `thinking` with required `mode` and `effo
 configured backend has been verified to accept an explicit reasoning-off
 request. This keeps the `:off` selector from being clamped to the lowest effort.
 
+List `off` in `efforts` to let the `auto` thinking classifier turn reasoning off
+for turns that need none (acknowledgements, commands given verbatim, recalled
+facts). `off` is not a rung: it is removed from the ladder and sets
+`thinking.autoOff`, and the classifier offers it beside the remaining efforts,
+never alone, with a tie-break that prefers any effort over off. It is rejected
+when `efforts` holds nothing else or when `requiresEffort: true`, where off
+would run the lowest effort. List it only on models whose `:off` is a real
+disable on the wire.
+
+```yaml
+providers:
+  openai-codex:
+    modelOverrides:
+      gpt-5.6-terra:
+        thinking:
+          mode: effort
+          efforts: [off, high, xhigh, max]
+```
+
 For a custom model with the default `thinkingFormat: openai`, `--thinking off`
 has no explicit off payload on `openai-completions`: when `reasoning_effort` is
 sent, it requests the first effort listed in `efforts`, even with

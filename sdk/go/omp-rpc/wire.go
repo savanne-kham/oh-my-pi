@@ -1770,6 +1770,7 @@ type ThinkingConfig struct {
 	EffortBudgets   map[string]float64 `json:"effortBudgets,omitempty"`
 	SuppressWhenOff *bool              `json:"suppressWhenOff,omitempty"`
 	RequiresEffort  *bool              `json:"requiresEffort,omitempty"`
+	AutoOff         *bool              `json:"autoOff,omitempty"`
 }
 
 func (v *ThinkingConfig) UnmarshalJSON(data []byte) error {
@@ -1789,6 +1790,7 @@ func (v *ThinkingConfig) decodeFrom(raw map[string]json.RawMessage) error {
 	d.optional("effortBudgets", &out.EffortBudgets)
 	d.optional("suppressWhenOff", &out.SuppressWhenOff)
 	d.optional("requiresEffort", &out.RequiresEffort)
+	d.optional("autoOff", &out.AutoOff)
 	if d.err != nil {
 		return d.err
 	}
@@ -4323,8 +4325,8 @@ type ThinkingLevelChangedEvent struct {
 	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
 	// The user's selector when it differs from the effective level.
 	Configured *ConfiguredThinkingLevel `json:"configured,omitempty"`
-	// The level `auto` resolved to this turn, once classified.
-	Resolved *Effort `json:"resolved,omitempty"`
+	// The level `auto` resolved to this turn, once classified; `off` when it disabled reasoning.
+	Resolved *ThinkingLevel `json:"resolved,omitempty"`
 }
 
 func (v *ThinkingLevelChangedEvent) UnmarshalJSON(data []byte) error {

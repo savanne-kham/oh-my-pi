@@ -222,6 +222,18 @@ describe("generated model policies", () => {
 		expect(models[4]?.cost.longContext).toBeUndefined();
 	});
 
+	it("applies the GPT-5.6 none off tier on the Codex transport", () => {
+		// Without it thinking-off on Codex silently ran the lowest listed effort.
+		const models = ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"].map(id =>
+			buildGenerated(createSpec({ id, api: "openai-codex-responses", provider: "openai-codex" })),
+		);
+
+		for (const model of models.slice(0, 3)) {
+			expect(model.compat).toMatchObject({ reasoningDisableMode: "none-effort" });
+		}
+		expect(models[3]?.compat).not.toMatchObject({ reasoningDisableMode: "none-effort" });
+	});
+
 	it("floors GPT-5.6 Codex-transport context windows at 1M (openai/codex#38917)", () => {
 		const models = [
 			// Codex discovery/registry still reports the stale 272000 for these.

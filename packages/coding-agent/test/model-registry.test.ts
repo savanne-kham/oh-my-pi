@@ -1858,6 +1858,37 @@ describe("ModelRegistry", () => {
 				defaultLevel: Effort.High,
 			});
 		});
+
+		test("off in efforts opts the model into auto-off instead of becoming a rung", () => {
+			const registry = readonlyRegistry({
+				providers: {
+					"openai-codex": {
+						modelOverrides: {
+							"gpt-5.6-terra": { thinking: { mode: "effort", efforts: ["off", "high", "xhigh", "max"] } },
+						},
+					},
+				},
+			});
+			expect(registry.getError()).toBeUndefined();
+			expect(registry.find("openai-codex", "gpt-5.6-terra")?.thinking).toMatchObject({
+				efforts: [Effort.High, Effort.XHigh, Effort.Max],
+				autoOff: true,
+			});
+		});
+
+		test.each([
+			["only off", { mode: "effort", efforts: ["off"] }, "at least one effort besides `off`"],
+			[
+				"off with requiresEffort",
+				{ mode: "effort", efforts: ["off", "high"], requiresEffort: true },
+				"without `off` when `requiresEffort` is true",
+			],
+		])("rejects %s in efforts", (_case, thinking, message) => {
+			const registry = readonlyRegistry({
+				providers: { "openai-codex": { modelOverrides: { "gpt-5.6-terra": { thinking } } } },
+			});
+			expect(registry.getError()?.message).toContain(message);
+		});
 	});
 
 	describe("modelOverrides (per-model customization)", () => {

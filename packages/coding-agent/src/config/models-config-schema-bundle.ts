@@ -141,10 +141,12 @@ export const getModelsConfigSchemaBundle = once(() => {
 	 * `minLevel`/`maxLevel`/`levels` range shape, normalizing both to
 	 * `ThinkingConfig` (ordered `efforts`, never empty). Precedence mirrors the
 	 * old runtime: explicit `levels` beat the min..max range; `efforts` beats both.
+	 * `off` in `efforts` is not a rung: it is stripped and sets `autoOff`, so the
+	 * `auto` classifier may turn thinking off for turns that need no reasoning.
 	 */
 	const ModelThinkingSchema = type({
 		mode: ThinkingControlModeSchema,
-		"efforts?": EffortSchema.array(),
+		"efforts?": EffortSchema.or('"off"').array(),
 		"defaultLevel?": EffortSchema,
 		"effortMap?": ReasoningEffortMapSchema,
 		"supportsDisplay?": "boolean",
@@ -161,8 +163,23 @@ export const getModelsConfigSchemaBundle = once(() => {
 				(value.minLevel !== undefined && value.maxLevel !== undefined) ||
 				ctx.mustBe("thinking with `efforts` (or legacy `levels`/`minLevel`+`maxLevel`)"),
 		)
-		.pipe((value: any) => {
-			let resolved = value.efforts ?? value.levels;
+		.narrow(
+			(value, ctx) =>
+				value.efforts === undefined ||
+				value.efforts.some(effort => effort !== "off") ||
+				ctx.mustBe("`efforts` with at least one effort besides `off`"),
+		)
+		.narrow(
+			(value, ctx) =>
+				value.requiresEffort !== true ||
+				!value.efforts?.includes("off") ||
+				ctx.mustBe("`efforts` without `off` when `requiresEffort` is true"),
+		)
+		.pipe(value => {
+			const autoOff = value.efforts?.includes("off") === true;
+			let resolved =
+				value.efforts?.filter((effort): effort is Exclude<typeof effort, "off"> => effort !== "off") ??
+				value.levels;
 			if (!resolved) {
 				const minIndex = EFFORT_ORDER.indexOf(value.minLevel!);
 				const maxIndex = EFFORT_ORDER.indexOf(value.maxLevel!);
@@ -175,6 +192,7 @@ export const getModelsConfigSchemaBundle = once(() => {
 				...(value.effortMap !== undefined && { effortMap: value.effortMap }),
 				...(value.supportsDisplay !== undefined && { supportsDisplay: value.supportsDisplay }),
 				...(value.requiresEffort !== undefined && { requiresEffort: value.requiresEffort }),
+				...(autoOff && { autoOff: true }),
 			};
 		});
 

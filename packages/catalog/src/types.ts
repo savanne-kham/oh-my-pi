@@ -190,6 +190,13 @@ export interface ThinkingConfig {
 	 */
 	requiresEffort?: boolean;
 	/**
+	 * The `auto` thinking classifier may resolve thinking off for turns that
+	 * need no reasoning. Off stays a disable state, not a rung of `efforts`.
+	 * Set from models.yml by listing `off` in `efforts`; never set together
+	 * with `requiresEffort`, where off would silently run the lowest effort.
+	 */
+	autoOff?: boolean;
+	/**
 	 * The catalog has no evidence this model reasons (unclassified id, no
 	 * capability metadata). The ladder is offered for the user to opt into:
 	 * sessions leave thinking unset until the user picks an effort, and a

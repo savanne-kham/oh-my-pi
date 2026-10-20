@@ -342,6 +342,7 @@ export interface ThinkingConfig {
 	effortBudgets?: Record<string, number>;
 	suppressWhenOff?: boolean;
 	requiresEffort?: boolean;
+	autoOff?: boolean;
 }
 
 /** Model descriptor: the client-relevant subset of the server's model record. */
@@ -976,8 +977,8 @@ export interface ThinkingLevelChangedEvent {
 	thinkingLevel?: ThinkingLevel;
 	/** The user's selector when it differs from the effective level. */
 	configured?: ConfiguredThinkingLevel;
-	/** The level `auto` resolved to this turn, once classified. */
-	resolved?: Effort;
+	/** The level `auto` resolved to this turn, once classified; `off` when it disabled reasoning. */
+	resolved?: ThinkingLevel;
 }
 
 /** Goal mode changed, by a host `goal` command or the agent's `goal` tool. */

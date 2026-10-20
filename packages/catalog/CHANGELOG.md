@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex GPT-5.6 models now send the `none` reasoning tier for thinking-off, as first-party OpenAI GPT-5.6 already does
+
 ## [18.12.3] - 2026-10-19
 
 ### Changed

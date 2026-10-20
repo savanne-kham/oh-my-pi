@@ -521,6 +521,7 @@ class ThinkingConfig:
     effort_budgets: dict[str, float] | None = None
     suppress_when_off: bool | None = None
     requires_effort: bool | None = None
+    auto_off: bool | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1179,8 +1180,8 @@ class ThinkingLevelChangedEvent:
     thinking_level: ThinkingLevel | None = None
     configured: ConfiguredThinkingLevel | None = None
     """The user's selector when it differs from the effective level."""
-    resolved: Effort | None = None
-    """The level `auto` resolved to this turn, once classified."""
+    resolved: ThinkingLevel | None = None
+    """The level `auto` resolved to this turn, once classified; `off` when it disabled reasoning."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1796,6 +1797,7 @@ def parse_thinking_config(value: object, path: str = "ThinkingConfig") -> Thinki
         effort_budgets=optional(payload, "effortBudgets", record(decode_float), path),
         suppress_when_off=optional(payload, "suppressWhenOff", decode_bool, path),
         requires_effort=optional(payload, "requiresEffort", decode_bool, path),
+        auto_off=optional(payload, "autoOff", decode_bool, path),
     )
 
 
@@ -2537,7 +2539,7 @@ def parse_thinking_level_changed_event(value: object, path: str = "ThinkingLevel
     return ThinkingLevelChangedEvent(
         thinking_level=optional(payload, "thinkingLevel", _decode_thinking_level, path),
         configured=optional(payload, "configured", _decode_configured_thinking_level, path),
-        resolved=optional(payload, "resolved", _decode_effort, path),
+        resolved=optional(payload, "resolved", _decode_thinking_level, path),
     )
 
 

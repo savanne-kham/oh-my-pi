@@ -2046,6 +2046,9 @@
 				},
 				"requiresEffort": {
 					"type": "boolean"
+				},
+				"autoOff": {
+					"type": "boolean"
 				}
 			},
 			"required": [
@@ -4125,8 +4128,8 @@
 					"description": "The user's selector when it differs from the effective level."
 				},
 				"resolved": {
-					"$ref": "#/$defs/Effort",
-					"description": "The level `auto` resolved to this turn, once classified."
+					"$ref": "#/$defs/ThinkingLevel",
+					"description": "The level `auto` resolved to this turn, once classified; `off` when it disabled reasoning."
 				}
 			},
 			"required": [
