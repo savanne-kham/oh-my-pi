@@ -77,6 +77,9 @@ provider "opencode-go" {
 		max-tokens-field "max_tokens"
 		reasoning-content-field "reasoning_content"
 		requires-reasoning-content-for-tool-calls #true
+		// The gateway accepts `reasoning_effort: none` on both routes; unlike
+		// `low`, this suppresses reasoning entirely.
+		reasoning-disable-mode "none-effort"
 	}
 	class "glm" {
 		thinking-mode "effort"
